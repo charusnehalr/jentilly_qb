@@ -1,29 +1,35 @@
-import { handleVoiceAgentSpeech, loginPrompt, startVoiceSession } from "@/lib/voice-agent";
+import {
+  getSessionProfileId,
+  handleVoiceAgentSpeech,
+  loginPrompt,
+  restoreSession,
+  startVoiceSession
+} from "@/lib/voice-agent";
 
 export async function POST(request: Request) {
   const formData = await request.formData();
   const speech = String(formData.get("SpeechResult") ?? "");
   const callSid = String(formData.get("CallSid") ?? "local-call");
-  const response = speech ? await answerSpeech(callSid, speech) : askForSpeech(callSid);
 
-  return new Response(response, {
-    headers: {
-      "content-type": "text/xml"
-    }
-  });
+  // Restore session from URL param — survives Vercel serverless cold starts
+  const url = new URL(request.url);
+  const savedProfileId = url.searchParams.get("pid") ?? undefined;
+  if (savedProfileId) {
+    restoreSession(callSid, savedProfileId);
+  }
+
+  const response = speech ? await answerSpeech(callSid, speech) : askForSpeech(callSid);
+  return new Response(response, { headers: { "content-type": "text/xml" } });
 }
 
 export async function GET() {
   return new Response(askForSpeech("local-call"), {
-    headers: {
-      "content-type": "text/xml"
-    }
+    headers: { "content-type": "text/xml" }
   });
 }
 
 function askForSpeech(callSid: string) {
   startVoiceSession(callSid);
-
   return twiml(`
     <Gather input="speech" action="/api/voice/twilio" method="POST" speechTimeout="3" timeout="15" language="en-US" profanityFilter="false">
       <Say>${escapeXml(loginPrompt())}</Say>
@@ -33,12 +39,18 @@ function askForSpeech(callSid: string) {
 }
 
 async function answerSpeech(callSid: string, speech: string) {
-  const response = await handleVoiceAgentSpeech(callSid, speech);
+  const text = await handleVoiceAgentSpeech(callSid, speech);
+
+  // Encode current profileId in action URL so the next turn works on any serverless instance
+  const profileId = getSessionProfileId(callSid);
+  const actionUrl = profileId
+    ? `/api/voice/twilio?pid=${encodeURIComponent(profileId)}`
+    : `/api/voice/twilio`;
 
   return twiml(`
-    <Say>${escapeXml(response)}</Say>
-    <Gather input="speech" action="/api/voice/twilio" method="POST" speechTimeout="3" timeout="15" language="en-US" profanityFilter="false">
-      <Say>You can ask another question, create a request, or hang up.</Say>
+    <Say>${escapeXml(text)}</Say>
+    <Gather input="speech" action="${actionUrl}" method="POST" speechTimeout="3" timeout="15" language="en-US" profanityFilter="false">
+      <Say>What else can I help you with?</Say>
     </Gather>
   `);
 }

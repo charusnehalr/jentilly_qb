@@ -28,6 +28,17 @@ export function startVoiceSession(callSid: string) {
   getSessions()[callSid] = {};
 }
 
+export function restoreSession(callSid: string, profileId: string) {
+  const sessions = getSessions();
+  if (!sessions[callSid]?.profileId) {
+    sessions[callSid] = { profileId };
+  }
+}
+
+export function getSessionProfileId(callSid: string): string | undefined {
+  return getSessions()[callSid]?.profileId;
+}
+
 export function tryAutoLoginByPhone(callSid: string, callerPhone: string) {
   const session = getSessions()[callSid];
   if (session?.profileId) return null;
@@ -439,14 +450,14 @@ async function answerMaintenance(normalized: string): Promise<string> {
 
 function roleHelp(profile: Profile) {
   if (profile.role === "tenant") {
-    return "You can ask about rent, lease details, or create a maintenance request with a time.";
+    return "You can ask about your rent balance, lease details, or report a maintenance issue. Say email me a summary to get an email.";
   }
 
   if (profile.role === "maintenance") {
     return "You can ask how many requests you have, or when your next request is scheduled.";
   }
 
-  return "You can ask how many tenants there are, who owes rent, or how many maintenance requests are active.";
+  return "You can ask: how many tenants, oldest maintenance request, most recent request, urgent requests, pending approvals, or who owes rent. Say email me a summary to get a maintenance report.";
 }
 
 function normalizeSpeech(value: string) {
