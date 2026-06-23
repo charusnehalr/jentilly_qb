@@ -207,14 +207,14 @@ function answerTenant(profile: Profile, normalized: string, originalSpeech: stri
   }
 
   // Email summary for tenant
-  if (includesAny(normalized, ["email", "send", "mail"])) {
+  if (includesAny(normalized, ["email", "send", "mail", "summary"])) {
     const to = getTenantEmailTo();
-    if (!to) return "No email address is configured. Please add EMAIL_SUMMARY_TO to your environment file.";
+    if (!to) return "No email address is configured. Please set EMAIL_TENANT_TO in your environment.";
     sendEmail(to, `Your Tenant Summary — ${propertyName}`, buildTenantEmailHtml(tenant.full_name, lease, balance, tenant.id)).catch(console.error);
     return `I am sending your account summary to ${to} now.`;
   }
 
-  return `You can ask about rent, your lease, say a maintenance issue, or say send me an email summary.`;
+  return `You can ask about rent, your lease, say a maintenance issue, or say send email summary.`;
 }
 
 async function answerLandlord(normalized: string): Promise<string> {
@@ -226,16 +226,38 @@ async function answerLandlord(normalized: string): Promise<string> {
   const outstandingRent = getOutstandingRent(demoData.rentPayments);
   const overduePayments = demoData.rentPayments.filter((p) => p.status === "overdue" || p.status === "partial");
 
+  const isEmailIntent = includesAny(normalized, ["email", "mail"]) ||
+    (normalized.includes("send") && includesAny(normalized, ["summary", "report", "list"]));
+
+  // ── Email checks FIRST so "send email for pending requests" doesn't hit the pending check ──
+
+  // Tenant summary email
+  if (isEmailIntent && includesAny(normalized, ["tenant", "resident", "people", "rent", "overdue", "payment"])) {
+    const to = getLandlordEmailTo();
+    if (!to) return "No landlord email is configured. Please set EMAIL_LANDLORD_TO in your environment.";
+    sendEmail(to, `Tenant Summary — ${propertyName}`, buildTenantsEmailHtml(overduePayments, outstandingRent)).catch(console.error);
+    return `I am sending the tenant summary to ${to} now.`;
+  }
+
+  // Maintenance issues email (default email when no tenant qualifier)
+  if (isEmailIntent) {
+    const to = getLandlordEmailTo();
+    if (!to) return "No landlord email is configured. Please set EMAIL_LANDLORD_TO in your environment.";
+    sendEmail(to, `Maintenance Summary — ${propertyName}`, buildIssuesEmailHtml(activeRequests)).catch(console.error);
+    return `I am sending the maintenance summary to ${to} now.`;
+  }
+
+  // ── Question answers ──
+
   if (includesAny(normalized, ["how many", "count", "number"]) && includesAny(normalized, ["tenant", "people", "resident"])) {
     return `There are ${tenants} tenants at ${propertyName}.`;
   }
 
   // Oldest maintenance request
-  if (includesAny(normalized, ["oldest", "old", "first", "longest", "waiting"])) {
+  if (includesAny(normalized, ["oldest", "old", "first", "longest"])) {
     const oldest = [...activeRequests].sort(
       (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
     )[0];
-
     if (!oldest) return "There are no open maintenance requests right now.";
     const tenantName = getTenantName(demoData, oldest.tenant_id);
     return `The oldest open request is ${oldest.title} from ${tenantName}, submitted on ${spokenDate(oldest.created_at)}. Status is ${oldest.review_status}.`;
@@ -265,25 +287,6 @@ async function answerLandlord(normalized: string): Promise<string> {
     return `${pending.length} requests need your approval. First few are ${names}.`;
   }
 
-  // Email summary of maintenance issues
-  if (
-    includesAny(normalized, ["email", "send", "mail"]) &&
-    includesAny(normalized, ["issue", "request", "maintenance", "repair", "problem", "summary"])
-  ) {
-    const to = getLandlordEmailTo();
-    if (!to) return "No email address is configured. Please add EMAIL_SUMMARY_TO to your environment file.";
-    sendEmail(to, `Maintenance Summary — ${propertyName}`, buildIssuesEmailHtml(activeRequests)).catch(console.error);
-    return `I am sending the maintenance summary to ${to} now.`;
-  }
-
-  // Email summary of tenants
-  if (includesAny(normalized, ["email", "send", "mail"]) && includesAny(normalized, ["tenant", "resident", "people"])) {
-    const to = getLandlordEmailTo();
-    if (!to) return "No email address is configured. Please add EMAIL_SUMMARY_TO to your environment file.";
-    sendEmail(to, `Tenant Summary — ${propertyName}`, buildTenantsEmailHtml(overduePayments, outstandingRent)).catch(console.error);
-    return `I am sending the tenant summary to ${to} now.`;
-  }
-
   if (includesAny(normalized, ["request", "maintenance", "problem", "repair"])) {
     return `There are ${activeRequests.length} active maintenance requests. Urgent requests are also visible to M N.`;
   }
@@ -299,7 +302,7 @@ async function answerLandlord(normalized: string): Promise<string> {
     return `${overduePayments.length} tenants have rent due or partially paid. Total outstanding rent is ${formatMoney(outstandingRent)}. First few are ${names}.`;
   }
 
-  return `Landlord summary: ${tenants} tenants, ${activeRequests.length} active requests, and ${formatMoney(outstandingRent)} outstanding rent. You can ask about the oldest request, most recent request, urgent issues, pending approvals, or say send email summary of issues or tenants.`;
+  return `Landlord summary: ${tenants} tenants, ${activeRequests.length} active requests, and ${formatMoney(outstandingRent)} outstanding rent. You can ask about the oldest request, most recent request, urgent issues, pending approvals, or say email me a summary.`;
 }
 
 function buildIssuesEmailHtml(requests: ReturnType<typeof listMaintenanceRequests>) {
