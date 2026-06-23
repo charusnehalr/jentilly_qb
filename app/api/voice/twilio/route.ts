@@ -4,7 +4,7 @@ export async function POST(request: Request) {
   const formData = await request.formData();
   const speech = String(formData.get("SpeechResult") ?? "");
   const callSid = String(formData.get("CallSid") ?? "local-call");
-  const response = speech ? answerSpeech(callSid, speech) : askForSpeech(callSid);
+  const response = speech ? await answerSpeech(callSid, speech) : askForSpeech(callSid);
 
   return new Response(response, {
     headers: {
@@ -32,8 +32,8 @@ function askForSpeech(callSid: string) {
   `);
 }
 
-function answerSpeech(callSid: string, speech: string) {
-  const response = handleVoiceAgentSpeech(callSid, speech);
+async function answerSpeech(callSid: string, speech: string) {
+  const response = await handleVoiceAgentSpeech(callSid, speech);
 
   return twiml(`
     <Say>${escapeXml(response)}</Say>

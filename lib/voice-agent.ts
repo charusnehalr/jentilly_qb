@@ -3,7 +3,8 @@ import { formatMoney, getOutstandingRent, getPaymentLease, getTenantName, getUni
 import { getLandlordEmailTo, getTenantEmailTo, sendEmail } from "./send-email";
 import {
   createMaintenanceRequest,
-  listMaintenanceRequests
+  listMaintenanceRequests,
+  listMaintenanceRequestsFromDB
 } from "./server-maintenance-store";
 import type { Lease, MaintenanceRequest, Profile } from "./types";
 
@@ -38,7 +39,7 @@ export function tryAutoLoginByPhone(callSid: string, callerPhone: string) {
   return `Welcome back, ${profile.full_name}. You are verified automatically. ${roleHelp(profile)}`;
 }
 
-export function handleVoiceAgentSpeech(callSid: string, rawSpeech: string) {
+export async function handleVoiceAgentSpeech(callSid: string, rawSpeech: string): Promise<string> {
   const speech = rawSpeech.trim();
   const session = getSessions()[callSid] ?? {};
   getSessions()[callSid] = session;
@@ -75,7 +76,7 @@ export function handleVoiceAgentSpeech(callSid: string, rawSpeech: string) {
     return loginPrompt();
   }
 
-  return answerByRole(profile, speech);
+  return await answerByRole(profile, speech);
 }
 
 export function loginPrompt() {
@@ -137,7 +138,7 @@ function authenticateFromSpeech(speech: string) {
   return findProfileByLoginOnly(normalizeCredential(withoutLoginWord));
 }
 
-function answerByRole(profile: Profile, speech: string) {
+async function answerByRole(profile: Profile, speech: string): Promise<string> {
   const normalized = normalizeSpeech(speech);
 
   if (profile.role === "tenant") {
@@ -145,11 +146,11 @@ function answerByRole(profile: Profile, speech: string) {
   }
 
   if (profile.role === "landlord" || profile.role === "admin") {
-    return answerLandlord(normalized);
+    return await answerLandlord(normalized);
   }
 
   if (profile.role === "maintenance") {
-    return answerMaintenance(normalized);
+    return await answerMaintenance(normalized);
   }
 
   return "I am not sure how to help with that yet.";
@@ -216,8 +217,8 @@ function answerTenant(profile: Profile, normalized: string, originalSpeech: stri
   return `You can ask about rent, your lease, say a maintenance issue, or say send me an email summary.`;
 }
 
-function answerLandlord(normalized: string) {
-  const allRequests = listMaintenanceRequests();
+async function answerLandlord(normalized: string): Promise<string> {
+  const allRequests = await listMaintenanceRequestsFromDB();
   const activeRequests = allRequests.filter(
     (r) => r.status !== "completed" && r.review_status !== "rejected"
   );
@@ -406,8 +407,8 @@ function buildTenantsEmailHtml(
 </table>`;
 }
 
-function answerMaintenance(normalized: string) {
-  const queue = listMaintenanceRequests().filter(
+async function answerMaintenance(normalized: string): Promise<string> {
+  const queue = (await listMaintenanceRequestsFromDB()).filter(
     (request) =>
       request.assigned_to === "maintenance-1" &&
       request.review_status === "accepted" &&
