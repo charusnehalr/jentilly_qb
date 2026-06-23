@@ -193,9 +193,21 @@ function answerTenant(profile: Profile, normalized: string, originalSpeech: stri
     return `Your unit is ${getUnitLabel(demoData, lease.unit_id)}. Your lease ends on ${spokenDate(lease.ends_on)} and monthly rent is ${formatMoney(lease.monthly_rent)}.`;
   }
 
+  // Show tenant's existing requests (status/count questions — must come before creation)
   if (
-    includesAny(normalized, ["maintenance", "repair", "request", "leak", "broken", "ac", "faucet", "window", "light"]) &&
-    !includesAny(normalized, ["email", "send", "mail", "summary"])
+    includesAny(normalized, ["how many", "show", "view", "list", "status", "my request", "my maintenance"]) &&
+    includesAny(normalized, ["request", "maintenance", "repair", "issue"])
+  ) {
+    const myRequests = listMaintenanceRequests().filter((r) => r.tenant_id === tenant.id);
+    const open = myRequests.filter((r) => r.status !== "completed");
+    if (myRequests.length === 0) return "You have no maintenance requests on record.";
+    const latest = myRequests[0];
+    return `You have ${myRequests.length} maintenance request${myRequests.length > 1 ? "s" : ""}, ${open.length} still open. Your most recent is ${latest.title}, status is ${latest.review_status}.`;
+  }
+
+  if (
+    includesAny(normalized, ["maintenance", "repair", "request", "leak", "broken", "ac", "faucet", "window", "light", "heater", "plumbing", "door", "pipe"]) &&
+    !includesAny(normalized, ["email", "send", "mail", "summary", "show", "view", "list", "status", "how many", "count"])
   ) {
     if (!lease) {
       return "I could not create a request because I could not find your active lease.";
@@ -213,7 +225,7 @@ function answerTenant(profile: Profile, normalized: string, originalSpeech: stri
     });
 
     return created.priority === "urgent"
-      ? `I created an urgent maintenance request for ${created.title}. It went directly to the landlord and M N. Your selected time is ${spokenDateTime(availability)}.`
+      ? `I created an urgent maintenance request for ${created.title}. It went directly to the landlord and maintenance team. Your selected time is ${spokenDateTime(availability)}.`
       : `I created a maintenance request for ${created.title}. It is waiting for landlord approval. Your selected time is ${spokenDateTime(availability)}.`;
   }
 
@@ -225,7 +237,7 @@ function answerTenant(profile: Profile, normalized: string, originalSpeech: stri
     return `I am sending your account summary to ${to} now.`;
   }
 
-  return `You can ask about rent, your lease, say a maintenance issue, or say send email summary.`;
+  return `You can say: what is my rent balance, what is my lease, show my maintenance requests, I have a leaking faucet, or email me a summary.`;
 }
 
 async function answerLandlord(normalized: string): Promise<string> {
