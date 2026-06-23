@@ -253,15 +253,14 @@ function statusRank(status: MaintenanceRequest["review_status"]) {
 }
 
 function formatAvailability(value?: string) {
-  if (!value) {
-    return "Not provided";
-  }
-
+  if (!value) return "Not provided";
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit"
-  }).format(new Date(value));
+  }).format(date);
 }

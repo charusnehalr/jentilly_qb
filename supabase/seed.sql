@@ -2,6 +2,16 @@
 -- or adapt it for any Postgres-compatible free database.
 -- The app also ships with the same generated dataset in lib/demo-data.ts.
 
+-- Clear existing data before re-seeding
+delete from activity_logs;
+delete from maintenance_requests;
+delete from rent_payments;
+delete from leases;
+delete from tenants;
+delete from units;
+delete from properties;
+delete from profiles;
+
 insert into profiles (id, login_id, password, email, full_name, role) values
   ('00000000-0000-0000-0000-000000000001', 'admin', 'admin', 'admin@theplaceonjentilly.com', 'Admin User', 'admin'),
   ('00000000-0000-0000-0000-000000000002', 'landlord', 'landlord', 'landlord@theplaceonjentilly.com', 'Maya Patel', 'landlord'),

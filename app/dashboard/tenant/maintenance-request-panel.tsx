@@ -201,14 +201,13 @@ export function MaintenanceRequestPanel({
 }
 
 function formatAvailability(value?: string) {
-  if (!value) {
-    return "not provided";
-  }
-
+  if (!value) return "not provided";
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit"
-  }).format(new Date(value));
+  }).format(date);
 }
