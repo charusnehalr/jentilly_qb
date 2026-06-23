@@ -7,6 +7,7 @@ export type Profile = {
   email: string;
   full_name: string;
   role: UserRole;
+  phone?: string;
 };
 
 export type Property = {

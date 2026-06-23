@@ -1,11 +1,11 @@
-import { demoData, findProfileByCredentials, propertyName } from "./demo-data";
+import { demoData, findProfileByCredentials, findProfileByLoginOnly, findProfileByName, findProfileByPhone, propertyName } from "./demo-data";
 import { formatMoney, getOutstandingRent, getPaymentLease, getTenantName, getUnitLabel } from "./data-utils";
+import { getLandlordEmailTo, getTenantEmailTo, sendEmail } from "./send-email";
 import {
-  countActiveMaintenanceRequests,
   createMaintenanceRequest,
   listMaintenanceRequests
 } from "./server-maintenance-store";
-import type { MaintenanceRequest, Profile } from "./types";
+import type { Lease, MaintenanceRequest, Profile } from "./types";
 
 type VoiceSession = {
   profileId?: string;
@@ -27,6 +27,17 @@ export function startVoiceSession(callSid: string) {
   getSessions()[callSid] = {};
 }
 
+export function tryAutoLoginByPhone(callSid: string, callerPhone: string) {
+  const session = getSessions()[callSid];
+  if (session?.profileId) return null;
+
+  const profile = findProfileByPhone(callerPhone);
+  if (!profile) return null;
+
+  getSessions()[callSid] = { profileId: profile.id };
+  return `Welcome back, ${profile.full_name}. You are verified automatically. ${roleHelp(profile)}`;
+}
+
 export function handleVoiceAgentSpeech(callSid: string, rawSpeech: string) {
   const speech = rawSpeech.trim();
   const session = getSessions()[callSid] ?? {};
@@ -36,11 +47,21 @@ export function handleVoiceAgentSpeech(callSid: string, rawSpeech: string) {
     return loginPrompt();
   }
 
+  // Allow switching roles at any time by saying "login landlord", "switch to MN", etc.
+  const normalized = normalizeSpeech(speech);
+  if (session.profileId && includesAny(normalized, ["login", "switch", "log in"])) {
+    const profile = authenticateFromSpeech(speech);
+    if (profile && profile.id !== session.profileId) {
+      session.profileId = profile.id;
+      return `Switched to ${profile.full_name}. ${roleHelp(profile)}`;
+    }
+  }
+
   if (!session.profileId) {
     const profile = authenticateFromSpeech(speech);
 
     if (!profile) {
-      return `I could not verify that login. Say something like, login tenant zero zero one password pass zero zero one.`;
+      return `I could not verify that login. Try saying just your login, like tenant zero zero one, or landlord, or M N.`;
     }
 
     session.profileId = profile.id;
@@ -58,19 +79,62 @@ export function handleVoiceAgentSpeech(callSid: string, rawSpeech: string) {
 }
 
 export function loginPrompt() {
-  return `Welcome to ${propertyName}. Please verify yourself. Say login admin password admin, login landlord password landlord, login M N password M N, or login tenant zero zero one password pass zero zero one.`;
+  return `Welcome to ${propertyName}. Please say your name. Say Adams for tenant, or Patel for landlord.`;
 }
 
 function authenticateFromSpeech(speech: string) {
   const normalized = normalizeSpeech(speech);
-  const login = extractBetween(normalized, "login", "password") ?? extractFirstCredential(normalized);
-  const password = extractAfter(normalized, "password") ?? extractSecondCredential(normalized);
+  const withoutLoginWord = normalized.replace(/^(log\s*in\s+|login\s+|switch\s+to\s+)/i, "").trim();
 
-  if (!login || !password) {
-    return undefined;
+  // Phonetic aliases for demo personas (Twilio often mishears non-English names)
+  const aaravVariants = ["aarav", "arav", "arrow", "aaron", "arau", "aura", "era", "irav", "ahrav"];
+  const mayaVariants = ["maya", "mia", "maia", "myah", "mya"];
+
+  if (aaravVariants.some((v) => normalized.includes(v)) && normalized.includes("adam")) {
+    return findProfileByLoginOnly("tenant001");
+  }
+  if (mayaVariants.some((v) => normalized.includes(v)) && normalized.includes("patel")) {
+    return findProfileByLoginOnly("landlord");
   }
 
-  return findProfileByCredentials(normalizeCredential(login), normalizeCredential(password));
+  // Also match on first name alone in case last name is dropped
+  if (aaravVariants.some((v) => normalized === v || normalized.startsWith(v + " ") || normalized.endsWith(" " + v))) {
+    return findProfileByLoginOnly("tenant001");
+  }
+  if (mayaVariants.some((v) => normalized === v || normalized.startsWith(v + " ") || normalized.endsWith(" " + v))) {
+    return findProfileByLoginOnly("landlord");
+  }
+
+  // Try by name first — "Aarav Adams" or "Maya Patel"
+  const byName = findProfileByName(withoutLoginWord) ?? findProfileByName(normalized);
+  if (byName) return byName;
+
+  // Try login ID with password
+  const rawLogin =
+    extractBetween(normalized, "login", "password") ??
+    extractBetween(normalized, "log in", "password");
+  const password =
+    extractAfter(normalized, "password") ??
+    extractAfter(normalized, "pass word");
+
+  if (rawLogin && password) {
+    const cleanLogin = rawLogin.replace(/^(log\s*in\s+|login\s+)/i, "").trim();
+    const profile = findProfileByCredentials(normalizeCredential(cleanLogin), normalizeCredential(password));
+    if (profile) return profile;
+  }
+
+  // Login ID only (no password)
+  const loginOnly =
+    extractAfter(normalized, "login") ??
+    extractAfter(normalized, "log in") ??
+    withoutLoginWord;
+
+  if (loginOnly) {
+    const profile = findProfileByLoginOnly(normalizeCredential(loginOnly));
+    if (profile) return profile;
+  }
+
+  return findProfileByLoginOnly(normalizeCredential(withoutLoginWord));
 }
 
 function answerByRole(profile: Profile, speech: string) {
@@ -117,7 +181,10 @@ function answerTenant(profile: Profile, normalized: string, originalSpeech: stri
     return `Your unit is ${getUnitLabel(demoData, lease.unit_id)}. Your lease ends on ${spokenDate(lease.ends_on)} and monthly rent is ${formatMoney(lease.monthly_rent)}.`;
   }
 
-  if (includesAny(normalized, ["maintenance", "repair", "request", "leak", "broken", "ac", "faucet", "window", "light"])) {
+  if (
+    includesAny(normalized, ["maintenance", "repair", "request", "leak", "broken", "ac", "faucet", "window", "light"]) &&
+    !includesAny(normalized, ["email", "send", "mail", "summary"])
+  ) {
     if (!lease) {
       return "I could not create a request because I could not find your active lease.";
     }
@@ -138,21 +205,83 @@ function answerTenant(profile: Profile, normalized: string, originalSpeech: stri
       : `I created a maintenance request for ${created.title}. It is waiting for landlord approval. Your selected time is ${spokenDateTime(availability)}.`;
   }
 
-  return `You can ask about rent, your lease, or say a maintenance issue with a time, like leaking faucet tomorrow at 5 PM.`;
+  // Email summary for tenant
+  if (includesAny(normalized, ["email", "send", "mail"])) {
+    const to = getTenantEmailTo();
+    if (!to) return "No email address is configured. Please add EMAIL_SUMMARY_TO to your environment file.";
+    sendEmail(to, `Your Tenant Summary — ${propertyName}`, buildTenantEmailHtml(tenant.full_name, lease, balance, tenant.id)).catch(console.error);
+    return `I am sending your account summary to ${to} now.`;
+  }
+
+  return `You can ask about rent, your lease, say a maintenance issue, or say send me an email summary.`;
 }
 
 function answerLandlord(normalized: string) {
-  const activeRequests = countActiveMaintenanceRequests();
+  const allRequests = listMaintenanceRequests();
+  const activeRequests = allRequests.filter(
+    (r) => r.status !== "completed" && r.review_status !== "rejected"
+  );
   const tenants = demoData.tenants.length;
   const outstandingRent = getOutstandingRent(demoData.rentPayments);
-  const overduePayments = demoData.rentPayments.filter((payment) => payment.status === "overdue" || payment.status === "partial");
+  const overduePayments = demoData.rentPayments.filter((p) => p.status === "overdue" || p.status === "partial");
 
   if (includesAny(normalized, ["how many", "count", "number"]) && includesAny(normalized, ["tenant", "people", "resident"])) {
     return `There are ${tenants} tenants at ${propertyName}.`;
   }
 
+  // Oldest maintenance request
+  if (includesAny(normalized, ["oldest", "old", "first", "longest", "waiting"])) {
+    const oldest = [...activeRequests].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    )[0];
+
+    if (!oldest) return "There are no open maintenance requests right now.";
+    const tenantName = getTenantName(demoData, oldest.tenant_id);
+    return `The oldest open request is ${oldest.title} from ${tenantName}, submitted on ${spokenDate(oldest.created_at)}. Status is ${oldest.review_status}.`;
+  }
+
+  // Most recent maintenance request
+  if (includesAny(normalized, ["recent", "latest", "newest", "last", "new"])) {
+    const newest = allRequests[0];
+    if (!newest) return "There are no maintenance requests yet.";
+    const tenantName = getTenantName(demoData, newest.tenant_id);
+    return `The most recent request is ${newest.title} from ${tenantName}, submitted on ${spokenDate(newest.created_at)}. Priority is ${newest.priority}.`;
+  }
+
+  // Urgent requests
+  if (includesAny(normalized, ["urgent", "emergency", "critical"])) {
+    const urgent = activeRequests.filter((r) => r.priority === "urgent");
+    if (urgent.length === 0) return "There are no urgent maintenance requests right now.";
+    const names = urgent.slice(0, 3).map((r) => `${r.title} from ${getTenantName(demoData, r.tenant_id)}`).join(", ");
+    return `There are ${urgent.length} urgent requests. They are ${names}.`;
+  }
+
+  // Pending approval
+  if (includesAny(normalized, ["pending", "approval", "approve", "waiting", "review"])) {
+    const pending = activeRequests.filter((r) => r.review_status === "pending");
+    if (pending.length === 0) return "No requests are waiting for your approval.";
+    const names = pending.slice(0, 3).map((r) => `${r.title} from ${getTenantName(demoData, r.tenant_id)}`).join(", ");
+    return `${pending.length} requests need your approval. First few are ${names}.`;
+  }
+
+  // Email summary of maintenance issues
+  if (includesAny(normalized, ["email", "send", "mail"]) && includesAny(normalized, ["issue", "request", "maintenance", "repair", "problem"])) {
+    const to = getLandlordEmailTo();
+    if (!to) return "No email address is configured. Please add EMAIL_SUMMARY_TO to your environment file.";
+    sendEmail(to, `Maintenance Summary — ${propertyName}`, buildIssuesEmailHtml(activeRequests)).catch(console.error);
+    return `I am sending the maintenance summary to ${to} now.`;
+  }
+
+  // Email summary of tenants
+  if (includesAny(normalized, ["email", "send", "mail"]) && includesAny(normalized, ["tenant", "resident", "people"])) {
+    const to = getLandlordEmailTo();
+    if (!to) return "No email address is configured. Please add EMAIL_SUMMARY_TO to your environment file.";
+    sendEmail(to, `Tenant Summary — ${propertyName}`, buildTenantsEmailHtml(overduePayments, outstandingRent)).catch(console.error);
+    return `I am sending the tenant summary to ${to} now.`;
+  }
+
   if (includesAny(normalized, ["request", "maintenance", "problem", "repair"])) {
-    return `There are ${activeRequests} active maintenance requests. Urgent requests are also visible to M N.`;
+    return `There are ${activeRequests.length} active maintenance requests. Urgent requests are also visible to M N.`;
   }
 
   if (includesAny(normalized, ["rent", "pay", "owe", "overdue", "balance"])) {
@@ -163,11 +292,115 @@ function answerLandlord(normalized: string) {
         return lease ? getTenantName(demoData, lease.tenant_id) : "Unknown tenant";
       })
       .join(", ");
-
     return `${overduePayments.length} tenants have rent due or partially paid. Total outstanding rent is ${formatMoney(outstandingRent)}. First few are ${names}.`;
   }
 
-  return `Landlord summary: ${tenants} tenants, ${activeRequests} active requests, and ${formatMoney(outstandingRent)} outstanding rent.`;
+  return `Landlord summary: ${tenants} tenants, ${activeRequests.length} active requests, and ${formatMoney(outstandingRent)} outstanding rent. You can ask about the oldest request, most recent request, urgent issues, pending approvals, or say send email summary of issues or tenants.`;
+}
+
+function buildIssuesEmailHtml(requests: ReturnType<typeof listMaintenanceRequests>) {
+  const rows = requests.map((r) => {
+    const tenant = getTenantName(demoData, r.tenant_id);
+    const unit = getUnitLabel(demoData, r.unit_id);
+    return `<tr>
+      <td style="padding:8px;border:1px solid #ddd">${r.title}</td>
+      <td style="padding:8px;border:1px solid #ddd">${tenant}</td>
+      <td style="padding:8px;border:1px solid #ddd">${unit}</td>
+      <td style="padding:8px;border:1px solid #ddd">${r.priority}</td>
+      <td style="padding:8px;border:1px solid #ddd">${r.review_status}</td>
+      <td style="padding:8px;border:1px solid #ddd">${new Date(r.created_at).toLocaleDateString()}</td>
+    </tr>`;
+  }).join("");
+
+  return `<h2>Maintenance Issues — ${propertyName}</h2>
+<p>${requests.length} active requests as of ${new Date().toLocaleDateString()}</p>
+<table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px">
+  <thead>
+    <tr style="background:#f3f4f6">
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Issue</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Tenant</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Unit</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Priority</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Status</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Submitted</th>
+    </tr>
+  </thead>
+  <tbody>${rows}</tbody>
+</table>`;
+}
+
+function buildTenantEmailHtml(
+  fullName: string,
+  lease: Lease | undefined,
+  balance: number,
+  tenantId: string
+) {
+  const requests = listMaintenanceRequests().filter((r) => r.tenant_id === tenantId);
+  const unit = lease ? getUnitLabel(demoData, lease.unit_id) : "No active lease";
+  const leaseEnd = lease ? new Date(lease.ends_on).toLocaleDateString() : "—";
+  const rent = lease ? formatMoney(lease.monthly_rent) : "—";
+
+  const requestRows = requests.length === 0
+    ? `<tr><td colspan="4" style="padding:8px;border:1px solid #ddd;color:#666">No maintenance requests</td></tr>`
+    : requests.map((r) => `<tr>
+        <td style="padding:8px;border:1px solid #ddd">${r.title}</td>
+        <td style="padding:8px;border:1px solid #ddd">${r.priority}</td>
+        <td style="padding:8px;border:1px solid #ddd">${r.status}</td>
+        <td style="padding:8px;border:1px solid #ddd">${new Date(r.created_at).toLocaleDateString()}</td>
+      </tr>`).join("");
+
+  return `<h2>Account Summary — ${fullName}</h2>
+<h3 style="color:#374151">Lease Details</h3>
+<table style="border-collapse:collapse;font-family:sans-serif;font-size:14px;margin-bottom:24px">
+  <tr><td style="padding:6px 16px 6px 0;font-weight:bold">Unit</td><td>${unit}</td></tr>
+  <tr><td style="padding:6px 16px 6px 0;font-weight:bold">Monthly Rent</td><td>${rent}</td></tr>
+  <tr><td style="padding:6px 16px 6px 0;font-weight:bold">Lease Ends</td><td>${leaseEnd}</td></tr>
+  <tr><td style="padding:6px 16px 6px 0;font-weight:bold">Balance Due</td><td style="color:${balance > 0 ? "#dc2626" : "#16a34a"}">${balance > 0 ? formatMoney(balance) : "Fully paid"}</td></tr>
+</table>
+<h3 style="color:#374151">Maintenance Requests</h3>
+<table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px">
+  <thead>
+    <tr style="background:#f3f4f6">
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Issue</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Priority</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Status</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Submitted</th>
+    </tr>
+  </thead>
+  <tbody>${requestRows}</tbody>
+</table>`;
+}
+
+function buildTenantsEmailHtml(
+  overduePayments: { length: number },
+  outstandingRent: number
+) {
+  const rows = demoData.tenants.map((tenant) => {
+    const lease = demoData.leases.find((l) => l.tenant_id === tenant.id);
+    const payments = demoData.rentPayments.filter((p) => p.lease_id === lease?.id);
+    const balance = payments.reduce((sum, p) => sum + Math.max(p.amount_due - p.amount_paid, 0), 0);
+    const status = balance > 0 ? `Owes ${formatMoney(balance)}` : "Paid";
+    return `<tr>
+      <td style="padding:8px;border:1px solid #ddd">${tenant.full_name}</td>
+      <td style="padding:8px;border:1px solid #ddd">${tenant.email}</td>
+      <td style="padding:8px;border:1px solid #ddd">${lease ? new Date(lease.ends_on).toLocaleDateString() : "No lease"}</td>
+      <td style="padding:8px;border:1px solid #ddd;color:${balance > 0 ? "#dc2626" : "#16a34a"}">${status}</td>
+    </tr>`;
+  }).join("");
+
+  return `<h2>Tenant Summary — ${propertyName}</h2>
+<p>Total outstanding rent: <strong>${formatMoney(outstandingRent)}</strong> — ${overduePayments.length} tenants with balance due</p>
+<table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px">
+  <thead>
+    <tr style="background:#f3f4f6">
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Name</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Email</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Lease Ends</th>
+      <th style="padding:8px;border:1px solid #ddd;text-align:left">Rent Status</th>
+    </tr>
+  </thead>
+  <tbody>${rows}</tbody>
+</table>`;
 }
 
 function answerMaintenance(normalized: string) {
@@ -216,7 +449,7 @@ function normalizeSpeech(value: string) {
 function normalizeCredential(value: string) {
   const cleaned = value
     .toLowerCase()
-    .replace(/\bm n\b/g, "mn")
+    .replace(/\bm\.?n\.?\b/g, "mn")
     .replace(/\bzero\b/g, "0")
     .replace(/\boh\b/g, "0")
     .replace(/\bone\b/g, "1")
@@ -246,13 +479,6 @@ function extractAfter(value: string, marker: string) {
   return value.match(new RegExp(`${marker}\\s+(.+)$`))?.[1];
 }
 
-function extractFirstCredential(value: string) {
-  return value.split(/\s+/)[0];
-}
-
-function extractSecondCredential(value: string) {
-  return value.split(/\s+/)[1];
-}
 
 function includesAny(value: string, terms: string[]) {
   return terms.some((term) => value.includes(term));

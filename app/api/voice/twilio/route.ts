@@ -25,7 +25,7 @@ function askForSpeech(callSid: string) {
   startVoiceSession(callSid);
 
   return twiml(`
-    <Gather input="speech" action="/api/voice/twilio" method="POST" speechTimeout="auto">
+    <Gather input="speech" action="/api/voice/twilio" method="POST" speechTimeout="3" timeout="15" language="en-US" profanityFilter="false">
       <Say>${escapeXml(loginPrompt())}</Say>
     </Gather>
     <Say>I did not hear anything. Please call again.</Say>
@@ -37,7 +37,7 @@ function answerSpeech(callSid: string, speech: string) {
 
   return twiml(`
     <Say>${escapeXml(response)}</Say>
-    <Gather input="speech" action="/api/voice/twilio" method="POST" speechTimeout="auto">
+    <Gather input="speech" action="/api/voice/twilio" method="POST" speechTimeout="3" timeout="15" language="en-US" profanityFilter="false">
       <Say>You can ask another question, create a request, or hang up.</Say>
     </Gather>
   `);

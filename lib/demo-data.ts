@@ -156,7 +156,8 @@ const tenantProfiles: Profile[] = Array.from({ length: 100 }, (_, index) => {
     password: `pass${loginNumber}`,
     email: `tenant${loginNumber}@theplaceonjentilly.com`,
     full_name: `${firstName} ${lastName}`,
-    role: "tenant"
+    role: "tenant",
+    phone: index === 0 ? "+16232715755" : undefined
   };
 });
 
@@ -279,6 +280,32 @@ export function findProfileByCredentials(loginId: string, password: string) {
   return demoProfiles.find(
     (profile) =>
       profile.login_id.toLowerCase() === loginId.trim().toLowerCase() &&
-      profile.password === password
+      profile.password.toLowerCase() === password.trim().toLowerCase()
   );
+}
+
+export function findProfileByLoginOnly(loginId: string) {
+  return demoProfiles.find(
+    (profile) => profile.login_id.toLowerCase() === loginId.trim().toLowerCase()
+  );
+}
+
+export function findProfileByPhone(phone: string) {
+  return demoProfiles.find((profile) => profile.phone === phone);
+}
+
+export function findProfileByName(spoken: string) {
+  const normalized = spoken.toLowerCase().trim();
+  return demoProfiles.find((profile) => {
+    const full = profile.full_name.toLowerCase();
+    const [first, last] = full.split(" ");
+    return (
+      full === normalized ||
+      first === normalized ||
+      last === normalized ||
+      full.includes(normalized) ||
+      normalized.includes(first) ||
+      normalized.includes(last ?? "")
+    );
+  });
 }
