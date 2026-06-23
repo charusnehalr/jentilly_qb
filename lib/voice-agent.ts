@@ -265,7 +265,10 @@ function answerLandlord(normalized: string) {
   }
 
   // Email summary of maintenance issues
-  if (includesAny(normalized, ["email", "send", "mail"]) && includesAny(normalized, ["issue", "request", "maintenance", "repair", "problem"])) {
+  if (
+    includesAny(normalized, ["email", "send", "mail"]) &&
+    includesAny(normalized, ["issue", "request", "maintenance", "repair", "problem", "summary"])
+  ) {
     const to = getLandlordEmailTo();
     if (!to) return "No email address is configured. Please add EMAIL_SUMMARY_TO to your environment file.";
     sendEmail(to, `Maintenance Summary — ${propertyName}`, buildIssuesEmailHtml(activeRequests)).catch(console.error);
