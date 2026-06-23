@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 
 import {
   createMaintenanceRequest,
-  listMaintenanceRequests,
-  updateMaintenanceRequest
+  listMaintenanceRequestsFromDB,
+  updateMaintenanceRequestInDB
 } from "@/lib/server-maintenance-store";
 import type { MaintenanceRequest } from "@/lib/types";
 
@@ -23,7 +23,7 @@ type UpdateMaintenanceBody = {
 
 export async function GET() {
   return NextResponse.json({
-    requests: listMaintenanceRequests()
+    requests: await listMaintenanceRequestsFromDB()
   });
 }
 
@@ -77,7 +77,7 @@ export async function PATCH(request: Request) {
           ? { status: "in_progress" as const, mn_confirmed_at: new Date().toISOString() }
           : { status: "completed" as const };
 
-  const updated = updateMaintenanceRequest(body.id, updates);
+  const updated = await updateMaintenanceRequestInDB(body.id, updates);
 
   if (!updated) {
     return NextResponse.json(

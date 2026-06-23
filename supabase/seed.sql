@@ -14,7 +14,7 @@ select
   'pass' || lpad(n::text, 3, '0'),
   'tenant' || lpad(n::text, 3, '0') || '@theplaceonjentilly.com',
   'Tenant ' || lpad(n::text, 3, '0'),
-  'tenant'
+  'tenant'::user_role
 from generate_series(1, 100) as n;
 
 insert into properties (id, landlord_id, name, address) values
@@ -63,7 +63,7 @@ select
     else ('2026-' || lpad((((n - 1) % 12) + 1)::text, 2, '0') || '-28')::date
   end,
   case when n <= 70 then 1150 + (n % 8) * 90 else 725 + (n % 4) * 75 end,
-  case when n % 19 = 0 then 'ending_soon' else 'active' end
+  (case when n % 19 = 0 then 'ending_soon' else 'active' end)::lease_status
 from generate_series(1, 100) as n;
 
 insert into rent_payments (lease_id, due_on, amount_due, amount_paid, status)
@@ -76,11 +76,11 @@ select
     when n % 10 in (1, 2) then round((case when n <= 70 then 1150 + (n % 8) * 90 else 725 + (n % 4) * 75 end) / 2)
     else case when n <= 70 then 1150 + (n % 8) * 90 else 725 + (n % 4) * 75 end
   end,
-  case
+  (case
     when n % 10 = 0 then 'overdue'
     when n % 10 in (1, 2) then 'partial'
     else 'paid'
-  end
+  end)::rent_status
 from generate_series(1, 100) as n;
 
 insert into maintenance_requests (tenant_id, unit_id, title, description, availability_window, priority, status, review_status, assigned_to, mn_confirmed_at)
@@ -93,9 +93,9 @@ select
   case when n % 4 = 0 then 'AC not cooling' when n % 4 = 1 then 'Leaking faucet' when n % 4 = 2 then 'Washer issue' else 'Light fixture' end,
   case when n % 4 = 0 then 'Room is not cooling properly.' when n % 4 = 1 then 'Bathroom faucet is leaking.' when n % 4 = 2 then 'Shared laundry washer stops mid-cycle.' else 'Bedroom light flickers.' end,
   case when n % 2 = 0 then 'Weekdays after 5 PM' else 'Saturday 10 AM - 2 PM' end,
-  case when n % 4 = 0 then 'urgent' when n % 4 = 3 then 'low' else 'normal' end,
-  case when n % 5 = 0 then 'completed' when n % 3 = 0 then 'in_progress' else 'open' end,
-  case when n % 4 = 0 then 'accepted' else 'pending' end,
+  (case when n % 4 = 0 then 'urgent' when n % 4 = 3 then 'low' else 'normal' end)::maintenance_priority,
+  (case when n % 5 = 0 then 'completed' when n % 3 = 0 then 'in_progress' else 'open' end)::maintenance_status,
+  (case when n % 4 = 0 then 'accepted' else 'pending' end)::maintenance_review_status,
   case when n % 4 = 0 then '00000000-0000-0000-0000-000000000004'::uuid else null end,
   case when n % 3 = 0 then now() else null end
 from generate_series(1, 28) as n;
