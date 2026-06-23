@@ -50,14 +50,13 @@ export function TenantNotifications({ tenantId }: { tenantId: string }) {
 }
 
 function formatAvailability(value?: string) {
-  if (!value) {
-    return "availability not provided";
-  }
-
+  if (!value) return "availability not provided";
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit"
-  }).format(new Date(value));
+  }).format(date);
 }
